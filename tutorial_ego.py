@@ -2,14 +2,16 @@ import glob
 import os
 import sys
 import time
+import math
+import numpy as np
 
-try:
-    sys.path.append(glob.glob('../carla/dist/carla-*%d.%d-%s.egg' % (
-        sys.version_info.major,
-        sys.version_info.minor,
-        'win-amd64' if os.name == 'nt' else 'linux-x86_64'))[0])
-except IndexError:
-    pass
+# try:
+#     sys.path.append(glob.glob('../carla/dist/carla-*%d.%d-%s.egg' % (
+#         sys.version_info.major,
+#         sys.version_info.minor,
+#         'win-amd64' if os.name == 'nt' else 'linux-x86_64'))[0])
+# except IndexError:
+#     pass
 
 import carla
 
@@ -38,6 +40,7 @@ def main():
 
     client = carla.Client(args.host, args.port)
     client.set_timeout(10.0)
+    radar_readings = ["val, azimuth, altitude, depth \n"]
 
     try:
 
@@ -53,14 +56,15 @@ def main():
         # --------------
         # Start recording
         # --------------
-        """
-        client.start_recorder('~/tutorial/recorder/recording01.log')
-        """
+        
+        # print("Starting recording")
+        # client.start_recorder('C:/Users/0d87jc/Code/ScenicScenes/logs/recording01.log')
 
         # --------------
         # Spawn ego vehicle
         # --------------
-        """
+        
+        print(world.get_actors())
         ego_bp = world.get_blueprint_library().find('vehicle.tesla.model3')
         ego_bp.set_attribute('role_name','ego')
         print('\nEgo role_name is set')
@@ -78,22 +82,32 @@ def main():
             print('\nEgo is spawned')
         else: 
             logging.warning('Could not found any spawn points')
-        """
 
+        actors = world.get_actors()
+        ego_id = None
+        for actor in actors:
+            actor_str = str(actor)
+            actor_type = actor_str.split("type=")[1].split(")")[0]
+            if actor_type == "vehicle.lincoln.mkz_2017":
+                ego_id = actor.id
+        
+        assert ego_id, "No ego car found"
+
+        
         # --------------
         # Add a RGB camera sensor to ego vehicle. 
         # --------------
-        """
+        """ 
         cam_bp = None
         cam_bp = world.get_blueprint_library().find('sensor.camera.rgb')
         cam_bp.set_attribute("image_size_x",str(1920))
         cam_bp.set_attribute("image_size_y",str(1080))
         cam_bp.set_attribute("fov",str(105))
         cam_location = carla.Location(2,0,1)
-        cam_rotation = carla.Rotation(0,180,0)
+        cam_rotation = carla.Rotation(0,0,0)
         cam_transform = carla.Transform(cam_location,cam_rotation)
         ego_cam = world.spawn_actor(cam_bp,cam_transform,attach_to=ego_vehicle, attachment_type=carla.AttachmentType.Rigid)
-        ego_cam.listen(lambda image: image.save_to_disk('~/tutorial/output/%.6d.jpg' % image.frame))
+        ego_cam.listen(lambda image: image.save_to_disk('./output/%.6d.jpg' % image.frame))
         """
 
         # --------------
@@ -170,20 +184,68 @@ def main():
         """
 
         # --------------
+        # Add a new radar sensor to ego vehicle
+        # --------------
+        
+        rad_cam = None
+        rad_bp = world.get_blueprint_library().find('sensor.other.radar')
+        rad_bp.set_attribute('horizontal_fov', str(35))
+        rad_bp.set_attribute('vertical_fov', str(20))
+        rad_bp.set_attribute('range', str(20))
+        rad_location = carla.Location(x=2.8, z=1.0)
+        rad_rotation = carla.Rotation(pitch=5)
+        rad_transform = carla.Transform(rad_location,rad_rotation)
+        rad_ego = world.spawn_actor(rad_bp,rad_transform,attach_to=ego_vehicle, attachment_type=carla.AttachmentType.Rigid)
+        def rad_callback(radar_data):
+            radar_readings.append(str(np.frombuffer(radar_data.raw_data, dtype=np.dtype('f4'))))
+            radar_readings.append("\n") # Just for better formatting in log info file
+
+            velocity_range = 7.5 # m/s
+            current_rot = radar_data.transform.rotation
+            for detect in radar_data:
+                azi = math.degrees(detect.azimuth)
+                alt = math.degrees(detect.altitude)
+                # The 0.25 adjusts a bit the distance so the dots can
+                # be properly seen
+                fw_vec = carla.Vector3D(x=detect.depth - 0.25)
+                carla.Transform(
+                    carla.Location(),
+                    carla.Rotation(
+                        pitch=current_rot.pitch + alt,
+                        yaw=current_rot.yaw + azi,
+                        roll=current_rot.roll)).transform(fw_vec)
+
+                def clamp(min_v, max_v, value):
+                    return max(min_v, min(value, max_v))
+
+                norm_velocity = detect.velocity / velocity_range # range [-1, 1]
+                r = int(clamp(0.0, 1.0, 1.0 - norm_velocity) * 255.0)
+                g = int(clamp(0.0, 1.0, 1.0 - abs(norm_velocity)) * 255.0)
+                b = int(abs(clamp(- 1.0, 0.0, - 1.0 - norm_velocity)) * 255.0)
+                world.debug.draw_point(
+                    radar_data.transform.location + fw_vec,
+                    size=0.075,
+                    life_time=0.06,
+                    persistent_lines=False,
+                    color=carla.Color(r, g, b))
+        rad_ego.listen(lambda radar_data: rad_callback(radar_data))
+        
+
+        # --------------
         # Place spectator on ego spawning
         # --------------
-        """
+        
         spectator = world.get_spectator()
         world_snapshot = world.wait_for_tick() 
         spectator.set_transform(ego_vehicle.get_transform())
-        """
+        
 
         # --------------
         # Enable autopilot for ego vehicle
         # --------------
-        """
+        
         ego_vehicle.set_autopilot(True)
-        """
+        
 
         # --------------
         # Game loop. Prevents the script from finishing.
@@ -195,7 +257,10 @@ def main():
         # --------------
         # Stop recording and destroy actors
         # --------------
+        print("Stopping recording")
         client.stop_recorder()
+        with open("./log_info/radar_test.txt", "w") as file:
+            file.writelines(radar_readings)
         if ego_vehicle is not None:
             if ego_cam is not None:
                 ego_cam.stop()
