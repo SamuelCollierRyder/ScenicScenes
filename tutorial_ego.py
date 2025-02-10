@@ -60,39 +60,20 @@ def main():
         # print("Starting recording")
         # client.start_recorder('C:/Users/0d87jc/Code/ScenicScenes/logs/recording01.log')
 
-        # --------------
-        # Spawn ego vehicle
-        # --------------
-        
-        print(world.get_actors())
-        ego_bp = world.get_blueprint_library().find('vehicle.tesla.model3')
-        ego_bp.set_attribute('role_name','ego')
-        print('\nEgo role_name is set')
-        ego_color = random.choice(ego_bp.get_attribute('color').recommended_values)
-        ego_bp.set_attribute('color',ego_color)
-        print('\nEgo color is set')
-
-        spawn_points = world.get_map().get_spawn_points()
-        number_of_spawn_points = len(spawn_points)
-
-        if 0 < number_of_spawn_points:
-            random.shuffle(spawn_points)
-            ego_transform = spawn_points[0]
-            ego_vehicle = world.spawn_actor(ego_bp,ego_transform)
-            print('\nEgo is spawned')
-        else: 
-            logging.warning('Could not found any spawn points')
+        world.get_map().get_spawn_points()
 
         actors = world.get_actors()
+        print(actors)
         ego_id = None
         for actor in actors:
             actor_str = str(actor)
             actor_type = actor_str.split("type=")[1].split(")")[0]
             if actor_type == "vehicle.lincoln.mkz_2017":
                 ego_id = actor.id
+                ego_vehicle = actor
+                break
         
         assert ego_id, "No ego car found"
-
         
         # --------------
         # Add a RGB camera sensor to ego vehicle. 
@@ -280,7 +261,7 @@ def main():
             if ego_imu is not None:
                 ego_imu.stop()
                 ego_imu.destroy()
-            ego_vehicle.destroy()
+            # ego_vehicle.destroy()
 
 if __name__ == '__main__':
 
